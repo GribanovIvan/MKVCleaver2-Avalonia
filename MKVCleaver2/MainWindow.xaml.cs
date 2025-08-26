@@ -5,287 +5,412 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text;
-using System.Windows;
-using System.Windows.Controls;
-using System.Windows.Forms;
-using NEbml.Core;
 using System.Threading.Tasks;
-using System.Threading;
-
-using CheckBox = System.Windows.Controls.CheckBox;
-using MessageBox = System.Windows.MessageBox;
-using OpenFileDialog = Microsoft.Win32.OpenFileDialog;
+using Avalonia.Controls;
+using Avalonia.Interactivity;
+using Avalonia.Platform.Storage;
+using Avalonia.Markup.Xaml;
+using Avalonia.Input;
 
 namespace MKVCleaver2
 {
-	/// <summary>
-	/// Interaction logic for MainWindow.xaml
-	/// </summary>
-	public partial class MainWindow : Window
-	{
-		private List<String> _extractCommands = new List<String>();
+    public partial class MainWindow : Window
+    {
+        private List<String> _extractCommands = new List<String>();
 
-		public MainWindow()
-		{
-			InitializeComponent();
+        public MainWindow()
+        {
+            InitializeComponent();
+        }
 
-			SettingsHelper.Init();
-			if (String.IsNullOrEmpty(SettingsHelper.GetToolnixPath()))
-			{
-				MessageBoxResult result = MessageBox.Show(this, 
-					"Don't forget to specify MKVToolnix path before extracting anything.",
-					"Warning",
-					MessageBoxButton.OK, 
-					MessageBoxImage.Warning);
-			}
-		}
+        private void InitializeComponent()
+        {
+            AvaloniaXamlLoader.Load(this);
+            
+            // Setup drag and drop
+            var filesBorder = this.FindControl<Border>("filesBorder");
+            if (filesBorder != null)
+            {
+                DragDrop.SetAllowDrop(filesBorder, true);
+                filesBorder.AddHandler(DragDrop.DragOverEvent, Border_DragOver);
+                filesBorder.AddHandler(DragDrop.DropEvent, Border_Drop);
+                filesBorder.AddHandler(DragDrop.DragEnterEvent, DragEnter);
+                filesBorder.AddHandler(DragDrop.DragLeaveEvent, DragLeave);
+            }
+            
+            SettingsHelper.Init();
+            if (String.IsNullOrEmpty(SettingsHelper.GetToolnixPath()))
+            {
+                // TODO: Show message about MKVToolnix not found
+            }
+        }
 
-		#region Non-Control Methods
+        #region Non-Control Methods
 
-		private void ToggleButtonState()
-		{
-			if (tvFiles.Items.Count > 0)
-			{
-				btnRemoveFile.IsEnabled = true;
-				btnExtract.IsEnabled = true;
-			}
-			if (tvFiles.Items.Count == 0)
-			{
-				btnRemoveFile.IsEnabled = false;
-				btnExtract.IsEnabled = false;
-			}
-		}
+        private void ToggleButtonState()
+        {
+            var tvFiles = this.FindControl<TreeView>("tvFiles");
+            var btnRemoveFile = this.FindControl<Button>("btnRemoveFile");
+            var btnExtract = this.FindControl<Button>("btnExtract");
 
-		#endregion
+            if (tvFiles?.ItemCount > 0)
+            {
+                btnRemoveFile!.IsEnabled = true;
+                btnExtract!.IsEnabled = true;
+            }
+            else
+            {
+                btnRemoveFile!.IsEnabled = false;
+                btnExtract!.IsEnabled = false;
+            }
+        }
 
-		private void btnAddFile_Click(object sender, RoutedEventArgs e)
-		{
-			OpenFileDialog dialog = new OpenFileDialog();
-			dialog.Multiselect = true;
-			dialog.Filter = "MKV Files (*.mkv)|*.mkv";
+        #endregion
 
-			ObservableCollection<MkvFile> items = new ObservableCollection<MkvFile>();
-			List<Track> intersection = new List<Track>();
+        private async void btnAddFile_Click(object sender, RoutedEventArgs e)
+        {
+            var topLevel = TopLevel.GetTopLevel(this);
+            var files = await topLevel!.StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+            {
+                Title = "Open MKV Files",
+                AllowMultiple = true,
+                FileTypeFilter = new[] { new FilePickerFileType("MKV Files") { Patterns = new[] { "*.mkv" } } }
+            });
 
-			if (dialog.ShowDialog() == true)
-			{
-				foreach (var fileName in dialog.FileNames)
-				{
-					// start process
-					var proc = new Process
-					{
-						StartInfo = new ProcessStartInfo
-						{
-							FileName = SettingsHelper.GetMkvInfoPath(),
-							Arguments = "--ui-language en \"" + fileName + "\"",
-							UseShellExecute = false,
-							RedirectStandardOutput = true,
-							CreateNoWindow = true
-						}
-					};
+            if (files.Count > 0)
+            {
+                await ProcessMkvFiles(files);
+            }
+        }
 
-					proc.StartInfo.StandardOutputEncoding = Encoding.UTF8;
+        private void btnRemoveFile_Click(object sender, RoutedEventArgs e)
+        {
+            var tvFiles = this.FindControl<TreeView>("tvFiles");
 
-					proc.Start();
+            if (tvFiles?.SelectedItem != null)
+            {
+                var items = (ObservableCollection<MkvFile>)tvFiles.ItemsSource!;
+                items.Remove((MkvFile)tvFiles.SelectedItem);
+            }
+            ToggleButtonState();
+        }
 
-					String output = null;
+        private async void btnLocateToolnix_Click(object sender, RoutedEventArgs e)
+        {
+            var topLevel = TopLevel.GetTopLevel(this);
+            var folders = await topLevel!.StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+            {
+                Title = "Select MKVToolnix Folder",
+                AllowMultiple = false
+            });
 
-					// get output
-					while (!proc.StandardOutput.EndOfStream)
-					{
-						output += proc.StandardOutput.ReadLine();
-					}
+            if (folders.Count > 0)
+            {
+                var selectedPath = folders[0].Path.LocalPath;
+                var mkvInfoPath = Path.Combine(selectedPath, "mkvinfo");
+                var mkvExtractPath = Path.Combine(selectedPath, "mkvextract");
 
-					proc.Close();
+                if (File.Exists(mkvInfoPath) && File.Exists(mkvExtractPath))
+                {
+                    SettingsHelper.SetToolnixPath(selectedPath);
+                }
+                else
+                {
+                    // TODO: Show message box about utilities not found
+                    Console.WriteLine("MKVToolnix utilities not found in selected directory");
+                }
+            }
+        }
 
-					var item = new MkvFile();
-					item.Path = fileName;
-					item.Name = Path.GetFileName(fileName);
-					item.Tracks = new EbmlParser().Parse(output);
-					item.Tracks.ForEach(x => x.Parent = item);
-					items.Add(item);
-				}
-			}
-
-			intersection.AddRange(items.First().Tracks);
-			foreach (var mkvFile in items)
-			{
-				intersection = intersection.Intersect(mkvFile.Tracks, new TrackComparer()).ToList();
-			}
-
-			tvFiles.ItemsSource = items;
-
-			ObservableCollection<BatchTrack> batchTracks = new ObservableCollection<BatchTrack>();
-			foreach (var track in intersection)
-			{
-				batchTracks.Add(new BatchTrack
-				{
-					Name = string.Format("{0}, {1} ({2})", track.Type, track.Language, track.Name),
-					Track = track
-				});
-			}
-			
-			lbBatchTracksToExtract.ItemsSource = batchTracks;
-			
-			ToggleButtonState();
-		}
-
-		private void btnRemoveFile_Click(object sender, RoutedEventArgs e)
-		{
-			tvFiles.Items.Remove(tvFiles.SelectedItem);
-			ToggleButtonState();
-		}
-
-		private void btnLocateToolnix_Click(object sender, RoutedEventArgs e)
-		{
-			using (var dialog = new FolderBrowserDialog())
-			{
-				DialogResult result = dialog.ShowDialog();
-				if (result == System.Windows.Forms.DialogResult.OK)
-				{
-					var selectedPath = dialog.SelectedPath;
-					if (File.Exists(selectedPath + "\\" + "mkvinfo.exe") &&
-					    File.Exists(selectedPath + "\\" + "mkvextract.exe"))
-					{
-						SettingsHelper.SetToolnixPath(selectedPath);
-					}
-					else
-					{
-						MessageBoxResult message = MessageBox.Show(this,
-							"Selected folder doesn't contain MKVToolnix utils! Please, specify the correct MKVToolnix folder",
-							"Wrong",
-							MessageBoxButton.OK,
-							MessageBoxImage.Exclamation);
-					}
-				}
-			}
-		}
-
-		private void tbExtractCommand_Refresh()
-		{
-			tbExtractCommand.Clear();
-			foreach (var str in _extractCommands)
-			{
-				tbExtractCommand.Text += str + "\n";
-			}
-		}
-
-		private void cbIsFileSelected_Checked(object sender, RoutedEventArgs e)
-		{
-			var checkBox = (CheckBox) sender;
-			var mkvFile = (MkvFile) checkBox.DataContext;
-			mkvFile.IsSelected = true;
-			mkvFile.Tracks.ForEach(x => x.IsSelected = true);
-		}
-
-		private void cbIsFileSelected_Unchecked(object sender, RoutedEventArgs e)
-		{
-			var checkBox = (CheckBox)sender;
-			var mkvFile = (MkvFile)checkBox.DataContext;
-			mkvFile.IsSelected = false;
-			mkvFile.Tracks.ForEach(x => x.IsSelected = false);
-		}
-
-		private void cbIsSelected_Checked(object sender, RoutedEventArgs e)
-		{
-			var checkBox = (CheckBox)sender;
-			var track = (Track)checkBox.DataContext;
-			var mkvFile = track.Parent;
-			track.IsSelected = true;
-
-			bool isAllSelected = true;
-			foreach (var mkvTrack in mkvFile.Tracks)
-			{
-				if (!mkvTrack.IsSelected)
-					isAllSelected = false;
-			}
-			if (isAllSelected)
-				mkvFile.IsSelected = true;
-		}
-
-		private void cbIsSelected_Unchecked(object sender, RoutedEventArgs e)
-		{
-			var checkBox = (CheckBox)sender;
-			var track = (Track)checkBox.DataContext;
-			var mkvFile = track.Parent;
-			track.IsSelected = false;
-			mkvFile.IsSelected = false;
-		}
-
-		private void cbBatchTrackIsSelected_Checked(object sender, RoutedEventArgs e)
-		{
-			
-		}
-
-		private void cbBatchTrackIsSelected_Unchecked(object sender, RoutedEventArgs e)
-		{
-			
-		}
-        //here bad student work
         private void btnExtract_Click(object sender, RoutedEventArgs e)
         {
-            int CountTrack = 0;
+            var tvFiles = this.FindControl<TreeView>("tvFiles");
+            var lbBatchTracksToExtract = this.FindControl<ListBox>("lbBatchTracksToExtract");
+            var tboutputDir = this.FindControl<TextBox>("tboutputDir");
+            var pbCurrentFile = this.FindControl<ProgressBar>("pbCurrentFile");
 
-            foreach (MKVCleaver2.MkvFile file in this.tvFiles.Items)
+            if (tvFiles?.ItemsSource is ObservableCollection<MkvFile> files)
             {
-                string commandstr = string.Empty;
-                if (file.IsSelected == true)
+                foreach (var file in files)
                 {
-                    foreach (MKVCleaver2.BatchTrack track in this.lbBatchTracksToExtract.Items)
+                    if (file.IsSelected == true)
                     {
-                        
-                        if (track.IsSelected == true)
+                        if (lbBatchTracksToExtract?.ItemsSource is ObservableCollection<BatchTrack> batchTracks)
                         {
-                            CountTrack++;
-                            if (tboutputDir.Text == string.Empty)
+                            var selectedTracks = batchTracks.Where(bt => bt.IsSelected).ToList();
+
+                            if (selectedTracks.Any())
                             {
-                                string standartPath = file.Path.Substring(0, file.Path.Length - file.Name.Length);
-                                commandstr += track.Track.Number.ToString() + ":\"" + standartPath + file.Name + "_" + track.Track.Type + "_" + track.Track.Language + "." + SettingsHelper.GetCodecContainerExtension(track.Track.Codec) + "\""; 
+                                string commandstr = string.Empty;
+
+                                foreach (var track in selectedTracks)
+                                {
+                                    string outputPath;
+                                    string baseFileName = Path.GetFileNameWithoutExtension(file.Name);
+                                    string extension = SettingsHelper.GetCodecContainerExtension(track.Track.Codec);
+
+                                    if (string.IsNullOrEmpty(tboutputDir?.Text))
+                                    {
+                                        string standartPath = Path.GetDirectoryName(file.Path) + "/";
+                                        outputPath = $"{standartPath}{baseFileName}_Track{track.Track.Number}_{track.Track.Type}_{track.Track.Language}{extension}";
+                                    }
+                                    else
+                                    {
+                                        outputPath = $"{tboutputDir.Text}/{baseFileName}_Track{track.Track.Number}_{track.Track.Type}_{track.Track.Language}{extension}";
+                                    }
+
+                                    commandstr += track.Track.Number.ToString() + ":\"" + outputPath + "\" ";
+                                }
+
+                                var proc = new Process
+                                {
+                                    StartInfo = new ProcessStartInfo
+                                    {
+                                        FileName = SettingsHelper.GetMkvExtractPath(),
+                                        UseShellExecute = false,
+                                        RedirectStandardOutput = true,
+                                        CreateNoWindow = true,
+                                        Arguments = " tracks \"" + file.Path + "\" " + commandstr,
+                                        StandardOutputEncoding = Encoding.UTF8
+                                    }
+                                };
+
+                                proc.Start();
+
+                                StreamReader sr = proc.StandardOutput;
+                                string? buffstr;
+
+                                while ((buffstr = sr.ReadLine()) != null)
+                                {
+                                    if (buffstr.Contains("Progress: "))
+                                    {
+                                        if (buffstr.Length >= 12)
+                                        {
+                                            var progressStr = buffstr.Substring(10);
+                                            var percentIndex = progressStr.IndexOf('%');
+                                            if (percentIndex > 0)
+                                            {
+                                                var progressValue = progressStr.Substring(0, percentIndex);
+                                                if (int.TryParse(progressValue, out int progress))
+                                                {
+                                                    pbCurrentFile!.Value = progress;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                proc.WaitForExit();
                             }
-                            else
-                            {
-                                commandstr += track.Track.Number.ToString() + ":\"" + tboutputDir.Text + "\\" + file.Name + "_" + track.Track.Type + "_" + track.Track.Language + "." + SettingsHelper.GetCodecContainerExtension(track.Track.Codec) + "\"";
-                            }                            
-                        }                       
-                    }
-                    var proc = new Process
-                    {                               
-                        StartInfo = new ProcessStartInfo
-                        {
-                            FileName = SettingsHelper.GetMkvExtractPath(),
-                            UseShellExecute = false,
-                            RedirectStandardOutput = true,
-                            CreateNoWindow = true,                            
-                            Arguments = " tracks \"" + file.Path + "\" " + commandstr,
-                            StandardOutputEncoding = Encoding.UTF8
                         }
-                    };
-                    proc.Start();
-
-                    //for progressbar
-                    StreamReader sr = proc.StandardOutput;                    
-                    string buffstr;
-
-                    while ((buffstr = sr.ReadLine()) != null)
-                    {
-                        if (buffstr.Contains("Progress: "))
-                        {
-                            if (buffstr.Length == 12)
-                            {
-                                pbCurrentFile.Value = int.Parse(buffstr.Substring(10, 1));
-                            }
-                            if (buffstr.Length == 13)
-                            {
-                                pbCurrentFile.Value = int.Parse(buffstr.Substring(10, 2));                                
-                            }
-                        }
-                       
                     }
-                                        
-
                 }
-            }              
+            }
         }
-        
+
+        #region Drag and Drop
+
+        private void DragEnter(object? sender, DragEventArgs e)
+        {
+            if (e.Data.Contains(DataFormats.Files))
+            {
+                var files = e.Data.GetFiles();
+                bool hasMkvFiles = false;
+                
+                if (files != null)
+                {
+                    foreach (var file in files)
+                    {
+                        if (file.Path.LocalPath.EndsWith(".mkv", StringComparison.OrdinalIgnoreCase))
+                        {
+                            hasMkvFiles = true;
+                            break;
+                        }
+                    }
+                }
+                
+                if (hasMkvFiles)
+                {
+                    var filesBorder = this.FindControl<Border>("filesBorder");
+                    if (filesBorder != null)
+                    {
+                        filesBorder.Background = Avalonia.Media.Brushes.LightBlue;
+                        filesBorder.Opacity = 0.8;
+                    }
+                }
+            }
+        }
+
+        private void DragLeave(object? sender, DragEventArgs e)
+        {
+            var filesBorder = this.FindControl<Border>("filesBorder");
+            if (filesBorder != null)
+            {
+                filesBorder.Background = Avalonia.Media.Brush.Parse("#00000000");
+                filesBorder.Opacity = 1.0;
+            }
+        }
+
+        private void Border_DragOver(object? sender, DragEventArgs e)
+        {
+            if (e.Data.Contains(DataFormats.Files))
+            {
+                var files = e.Data.GetFiles();
+                bool hasMkvFiles = false;
+                
+                if (files != null)
+                {
+                    foreach (var file in files)
+                    {
+                        if (file.Path.LocalPath.EndsWith(".mkv", StringComparison.OrdinalIgnoreCase))
+                        {
+                            hasMkvFiles = true;
+                            break;
+                        }
+                    }
+                }
+                
+                if (hasMkvFiles)
+                {
+                    e.DragEffects = DragDropEffects.Copy;
+                }
+                else
+                {
+                    e.DragEffects = DragDropEffects.None;
+                }
+            }
+            else
+            {
+                e.DragEffects = DragDropEffects.None;
+            }
+        }
+
+        private async void Border_Drop(object? sender, DragEventArgs e)
+        {
+            var filesBorder = this.FindControl<Border>("filesBorder");
+            if (filesBorder != null)
+            {
+                filesBorder.Background = Avalonia.Media.Brush.Parse("#00000000");
+                filesBorder.Opacity = 1.0;
+            }
+            
+            if (e.Data.Contains(DataFormats.Files))
+            {
+                var files = e.Data.GetFiles();
+                if (files != null)
+                {
+                    var mkvFiles = files.Where(f => f.Path.LocalPath.EndsWith(".mkv", StringComparison.OrdinalIgnoreCase))
+                                       .Cast<IStorageFile>()
+                                       .ToList();
+                    
+                    if (mkvFiles.Any())
+                    {
+                        await ProcessMkvFiles(mkvFiles);
+                    }
+                }
+            }
+        }
+
+        #endregion
+
+        #region File Processing
+
+        private async Task ProcessMkvFiles(IEnumerable<IStorageFile> files)
+        {
+            var items = new List<MkvFile>();
+
+            foreach (var file in files)
+            {
+                string fileName = file.Path.LocalPath;
+                
+                var proc = new Process
+                {
+                    StartInfo = new ProcessStartInfo
+                    {
+                        FileName = SettingsHelper.GetMkvInfoPath(),
+                        Arguments = "\"" + fileName + "\"",
+                        UseShellExecute = false,
+                        RedirectStandardOutput = true,
+                        CreateNoWindow = true
+                    }
+                };
+
+                proc.StartInfo.StandardOutputEncoding = Encoding.UTF8;
+                proc.Start();
+
+                String output = "";
+                while (!proc.StandardOutput.EndOfStream)
+                {
+                    output += proc.StandardOutput.ReadLine() + "\n";
+                }
+                proc.WaitForExit();
+
+                var item = new MkvFile();
+                item.Path = fileName;
+                item.Name = Path.GetFileName(fileName);
+                item.Tracks = new EbmlParser().Parse(output);
+                item.IsSelected = true;
+                
+                foreach (var track in item.Tracks)
+                {
+                    track.Parent = item;
+                }
+                
+                items.Add(item);
+            }
+
+            List<Track> commonTracks = new List<Track>();
+            
+            if (items.Count > 0)
+            {
+                if (items.Count == 1)
+                {
+                    commonTracks.AddRange(items[0].Tracks);
+                }
+                else
+                {
+                    commonTracks.AddRange(items.First().Tracks);
+                    foreach (var mkvFile in items.Skip(1))
+                    {
+                        commonTracks = commonTracks.Intersect(mkvFile.Tracks, new TrackComparer()).ToList();
+                    }
+                }
+            }
+
+            await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                var tvFiles = this.FindControl<TreeView>("tvFiles");
+                var lbBatchTracksToExtract = this.FindControl<ListBox>("lbBatchTracksToExtract");
+
+                var existingItems = tvFiles!.ItemsSource as ObservableCollection<MkvFile>;
+                if (existingItems == null)
+                {
+                    existingItems = new ObservableCollection<MkvFile>();
+                    tvFiles.ItemsSource = existingItems;
+                }
+
+                foreach (var item in items)
+                {
+                    existingItems.Add(item);
+                }
+
+                ObservableCollection<BatchTrack> batchTracks = new ObservableCollection<BatchTrack>();
+                foreach (var track in commonTracks)
+                {
+                    var batchTrack = new BatchTrack
+                    {
+                        Name = string.Format("{0}, {1} ({2})", track.Type, track.Language, track.Name),
+                        Track = track,
+                        IsSelected = true
+                    };
+                    batchTracks.Add(batchTrack);
+                }
+
+                lbBatchTracksToExtract!.ItemsSource = batchTracks;
+                ToggleButtonState();
+            });
+        }
+
+        #endregion
     }
 }

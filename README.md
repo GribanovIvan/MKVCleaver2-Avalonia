@@ -1,26 +1,26 @@
-# MKVCleaver2
-Open source version of original [MKVCleaver](https://blogs.sapib.ca/apps/mkvcleaver/) by Ilia Bakhmoutski
+# MKVCleaver2 on Avalonia. Kinda.
 
-## Prologue
+Claude Sonnet 4 rewrite of [MKVCleaver2](https://github.com/StriderAJR/MKVCleaver2) by StriderAJR.
 
-[MKVCleaver](https://blogs.sapib.ca/apps/mkvcleaver/) - is an awesome utility to extract mkv file tracks in batch mode. UI is much more ellegant than that in [gMKVExtractGui](https://sourceforge.net/projects/gmkvextractgui/). Many thanks to Ilia Bakhmoutski for reviving [OGMClever](https://sites.google.com/site/ogmcleaver/).
+## What
 
-And so one day comes my wish to make some changes into MKVCleaver. But maybe I'm a head disabled and couldn't google MKVCLeaver sources or this utility was really never open sourced. So I decided to take the path of revived MKVExtractGUI which was forked by enthusiasts and named MKVExtractGUI2. And thus I name my open source version of MKVCleaver - MKVCleaver2.
+Basically, a program to extract tracks from MKV. I wanted to run it on Linux, so I forced Claude Sonnet 4 to rewrite it to the Avalonia framework that supports Linux.
 
-UI will try to copy original MKVCleaver and OGMCleaver as much as possible. But I will totally write backend on my own from scratch which means that I don't know how long will it take to create a first stable beta. And surely I will appreciate any contributing.
+## Requirements
 
-So feel free to fork and then pull request this project. ^_^
+- .NET 6.0 or later  
+- MKVToolnix (`mkvinfo` and `mkvextract`)
 
-# MKVCleaver2
-Версия с открытым исходным кодом оригинальной программы [MKVCleaver](https://blogs.sapib.ca/apps/mkvcleaver/), созданной Ilia Bakhmoutski
+## If you want to contribute
 
-## Предыстория
-[MKVCleaver](https://blogs.sapib.ca/apps/mkvcleaver/) - шикарная программа, которая позволяет извлекать содержимое MKV файлов в batch режиме. Интерфейс очень удобен, даже удобнее чем менеджер задач в том же [gMKVExtractGui](https://sourceforge.net/projects/gmkvextractgui/). В общем, огромное спасибо Ilia Bakhmoutski за то, что возродил программулинку [OGMClever](https://sites.google.com/site/ogmcleaver/).
+Please don't use C#. No good program was ever written in C#, and if it was, then it could have been better.  
+I will hide this fork once a sufficient Linux program is released, not excluding the possibility that I will make a proper alternative with a more respectful README.  
+If you want to help, the best you can do is start from scratch and do it the right way.
 
-И вот настал однажды тот момент, когда мне захотелось немного улучшить MKVCleaver. Было принято решение пойти по пути брошенного проекта MKVExtractGUI, который был возрожден другим разработчиком под названием MKVExtractGUI2, и создать open-source ветку MKVCleaver2.
+## Status
 
-Интерфейс будет по максимуму приближен к оригинальному MKVCleaver и OGMClever. Исходный же код проекта будет создаваться с нуля, поэтому насколько растянется этот проект и когда выйдет стабильная версия - неизвестно. 
+Works on my machine. Sometimes. Does the job. Maybe.
 
-Но если кто-то захочет помочь, не раздумывая делайте форк, а затем и пулл реквест. ^_^
+## License
 
-
+Public domain. Do whatever you want.
